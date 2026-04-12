@@ -47,6 +47,7 @@ from crewai.a2a.types import (
 )
 from crewai.a2a.updates import (
     PollingConfig,
+    PollingHandler,
     PushNotificationConfig,
     StreamingHandler,
     UpdateConfig,
@@ -586,6 +587,18 @@ async def _aexecute_a2a_delegation_impl(
     handler = get_handler(updates)
     use_polling = isinstance(updates, PollingConfig)
 
+    # If the user hasn't explicitly configured an updates strategy and the remote
+    # agent advertises that it does not support streaming, fall back to polling.
+    if updates is None and not (
+        agent_card.capabilities and agent_card.capabilities.streaming
+    ):
+        logger.debug(
+            "Remote agent does not support streaming; falling back to PollingHandler",
+            extra={"endpoint": endpoint, "a2a_agent_name": a2a_agent_name},
+        )
+        handler = PollingHandler
+        use_polling = True
+
     handler_kwargs: dict[str, Any] = {
         "turn_number": turn_number,
         "is_multiturn": is_multiturn,
@@ -606,6 +619,18 @@ async def _aexecute_a2a_delegation_impl(
                 "polling_timeout": updates.timeout or float(timeout),
                 "history_length": updates.history_length,
                 "max_polls": updates.max_polls,
+            }
+        )
+    elif use_polling and updates is None:
+        # Fallback to polling because the agent card does not support streaming;
+        # use PollingConfig defaults so PollingHandler gets the kwargs it needs.
+        _default_polling = PollingConfig()
+        handler_kwargs.update(
+            {
+                "polling_interval": _default_polling.interval,
+                "polling_timeout": float(timeout),
+                "history_length": _default_polling.history_length,
+                "max_polls": _default_polling.max_polls,
             }
         )
     elif isinstance(updates, PushNotificationConfig):
