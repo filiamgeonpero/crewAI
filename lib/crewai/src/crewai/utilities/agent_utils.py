@@ -6,6 +6,7 @@ import concurrent.futures
 import contextvars
 from dataclasses import dataclass, field
 from datetime import datetime
+import importlib
 import inspect
 import json
 import re
@@ -1085,6 +1086,22 @@ def _print_current_organization() -> None:
         )
 
 
+# Allowlist of trusted module prefixes for dynamic tool imports from the
+# repository API.  Only modules whose fully-qualified name starts with one of
+# these prefixes are permitted.  This prevents a compromised or spoofed API
+# response from importing arbitrary Python modules (e.g. ``subprocess``,
+# ``os``, ``shutil``) and achieving Remote Code Execution.
+ALLOWED_TOOL_MODULE_PREFIXES: Final[tuple[str, ...]] = (
+    "crewai_tools.",
+    "crewai.tools.",
+)
+
+
+def _is_trusted_tool_module(module_path: str) -> bool:
+    """Return True if *module_path* is within the trusted tool allowlist."""
+    return any(module_path.startswith(prefix) for prefix in ALLOWED_TOOL_MODULE_PREFIXES)
+
+
 def load_agent_from_repository(from_repository: str) -> dict[str, Any]:
     """Load an agent from the repository.
 
@@ -1099,8 +1116,6 @@ def load_agent_from_repository(from_repository: str) -> dict[str, Any]:
     """
     attributes: dict[str, Any] = {}
     if from_repository:
-        import importlib
-
         if callable(_create_plus_client_hook):
             client = _create_plus_client_hook()
         else:
@@ -1128,8 +1143,26 @@ def load_agent_from_repository(from_repository: str) -> dict[str, Any]:
                 attributes[key] = []
                 for tool in value:
                     try:
-                        module = importlib.import_module(tool["module"])
-                        tool_class = getattr(module, tool["name"])
+                        tool_module = tool["module"]
+                        tool_name = tool["name"]
+
+                        if not _is_trusted_tool_module(tool_module):
+                            raise AgentRepositoryError(
+                                f"Untrusted tool module '{tool_module}'. "
+                                f"Only modules starting with {ALLOWED_TOOL_MODULE_PREFIXES} are allowed."
+                            )
+
+                        module = importlib.import_module(tool_module)
+                        tool_class = getattr(module, tool_name)
+
+                        if not (
+                            isinstance(tool_class, type)
+                            and issubclass(tool_class, BaseTool)
+                        ):
+                            raise AgentRepositoryError(
+                                f"Tool '{tool_name}' from module '{tool_module}' "
+                                f"is not a BaseTool subclass."
+                            )
 
                         tool_value = tool_class(**tool["init_params"])
 
