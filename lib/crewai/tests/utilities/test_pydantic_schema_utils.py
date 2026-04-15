@@ -19,6 +19,9 @@ import pytest
 from pydantic import BaseModel
 
 from crewai.utilities.pydantic_schema_utils import (
+    _break_circular_refs,
+    _has_circular_refs,
+    _safe_replace_refs,
     build_rich_field_description,
     convert_oneof_to_anyof,
     create_model_from_schema,
@@ -882,3 +885,333 @@ class TestEndToEndMCPSchema:
         )
         assert obj.filters.date_from == datetime.date(2025, 1, 1)
         assert obj.filters.categories == ["news", "tech"]
+
+
+# ---------------------------------------------------------------------------
+# Circular $ref handling  (issue #5474)
+# ---------------------------------------------------------------------------
+
+
+class TestCircularRefDetection:
+    """Tests for _has_circular_refs helper."""
+
+    def test_detects_direct_self_reference(self) -> None:
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {"child": {"$ref": "#/$defs/Node"}},
+            "$defs": {
+                "Node": {
+                    "type": "object",
+                    "properties": {
+                        "children": {
+                            "type": "array",
+                            "items": {"$ref": "#/$defs/Node"},
+                        },
+                    },
+                },
+            },
+        }
+        assert _has_circular_refs(schema, schema["$defs"]) is True
+
+    def test_detects_indirect_circular_reference(self) -> None:
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {"a": {"$ref": "#/$defs/A"}},
+            "$defs": {
+                "A": {
+                    "type": "object",
+                    "properties": {"b": {"$ref": "#/$defs/B"}},
+                },
+                "B": {
+                    "type": "object",
+                    "properties": {"a": {"$ref": "#/$defs/A"}},
+                },
+            },
+        }
+        assert _has_circular_refs(schema, schema["$defs"]) is True
+
+    def test_no_circular_ref(self) -> None:
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {"item": {"$ref": "#/$defs/Item"}},
+            "$defs": {
+                "Item": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                },
+            },
+        }
+        assert _has_circular_refs(schema, schema["$defs"]) is False
+
+
+class TestBreakCircularRefs:
+    """Tests for _break_circular_refs helper."""
+
+    def test_breaks_direct_self_reference(self) -> None:
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {"child": {"$ref": "#/$defs/Node"}},
+            "$defs": {
+                "Node": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "children": {
+                            "type": "array",
+                            "items": {"$ref": "#/$defs/Node"},
+                        },
+                    },
+                },
+            },
+        }
+        _break_circular_refs(schema, schema["$defs"], set())
+        # The self-referential $ref inside Node's items should be replaced
+        items = schema["$defs"]["Node"]["properties"]["children"]["items"]
+        assert items == {"type": "object"}
+        assert "$ref" not in items
+
+    def test_preserves_non_circular_refs(self) -> None:
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {"item": {"$ref": "#/$defs/Item"}},
+            "$defs": {
+                "Item": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                },
+            },
+        }
+        original = deepcopy(schema)
+        _break_circular_refs(schema, schema["$defs"], set())
+        # Non-circular schema should be unchanged
+        assert schema == original
+
+
+class TestSafeReplaceRefs:
+    """Tests for _safe_replace_refs."""
+
+    def test_resolves_non_circular_schema(self) -> None:
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {"item": {"$ref": "#/$defs/Item"}},
+            "$defs": {
+                "Item": {
+                    "type": "object",
+                    "properties": {"id": {"type": "integer"}},
+                },
+            },
+        }
+        result = _safe_replace_refs(schema)
+        assert "$ref" not in result.get("properties", {}).get("item", {})
+        assert result["properties"]["item"]["type"] == "object"
+
+    def test_handles_circular_schema_without_recursion_error(self) -> None:
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {"root": {"$ref": "#/$defs/TreeNode"}},
+            "$defs": {
+                "TreeNode": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "children": {
+                            "type": "array",
+                            "items": {"$ref": "#/$defs/TreeNode"},
+                        },
+                    },
+                },
+            },
+        }
+        # Must not raise RecursionError
+        result = _safe_replace_refs(schema)
+        assert isinstance(result, dict)
+
+
+class TestResolveRefsCircular:
+    """Tests that resolve_refs handles circular references."""
+
+    def test_circular_ref_does_not_recurse(self) -> None:
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {"root": {"$ref": "#/$defs/Node"}},
+            "$defs": {
+                "Node": {
+                    "type": "object",
+                    "properties": {
+                        "child": {"$ref": "#/$defs/Node"},
+                    },
+                },
+            },
+        }
+        resolved = resolve_refs(schema)
+        # The circular ref should become {"type": "object"} stub
+        child = resolved["properties"]["root"]["properties"]["child"]
+        assert child == {"type": "object"}
+
+    def test_indirect_circular_ref(self) -> None:
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {"a": {"$ref": "#/$defs/A"}},
+            "$defs": {
+                "A": {
+                    "type": "object",
+                    "properties": {"b": {"$ref": "#/$defs/B"}},
+                },
+                "B": {
+                    "type": "object",
+                    "properties": {"a": {"$ref": "#/$defs/A"}},
+                },
+            },
+        }
+        resolved = resolve_refs(schema)
+        # A -> B -> A(cycle) => the second A should be a stub
+        b_schema = resolved["properties"]["a"]["properties"]["b"]
+        assert b_schema["properties"]["a"] == {"type": "object"}
+
+
+class TestCreateModelCircularRef:
+    """End-to-end tests for create_model_from_schema with circular $ref schemas.
+
+    Regression tests for GitHub issue #5474: MCP servers with >10 tools
+    that expose self-referential JSON schemas caused
+    ``RecursionError: maximum recursion depth exceeded``.
+    """
+
+    def test_direct_self_referential_schema(self) -> None:
+        """A type that references itself (tree-like structure)."""
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "children": {
+                    "type": "array",
+                    "items": {"$ref": "#/$defs/TreeNode"},
+                },
+            },
+            "required": ["name"],
+            "$defs": {
+                "TreeNode": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "children": {
+                            "type": "array",
+                            "items": {"$ref": "#/$defs/TreeNode"},
+                        },
+                    },
+                    "required": ["name"],
+                },
+            },
+        }
+        Model = create_model_from_schema(schema, model_name="TreeSchema")
+        assert Model.__name__ == "TreeSchema"
+        obj = Model(name="root")
+        assert obj.name == "root"
+
+    def test_indirect_circular_reference(self) -> None:
+        """Two types that reference each other (A -> B -> A)."""
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {"node": {"$ref": "#/$defs/NodeA"}},
+            "required": ["node"],
+            "$defs": {
+                "NodeA": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "linked": {"$ref": "#/$defs/NodeB"},
+                    },
+                    "required": ["name"],
+                },
+                "NodeB": {
+                    "type": "object",
+                    "properties": {
+                        "value": {"type": "integer"},
+                        "back": {"$ref": "#/$defs/NodeA"},
+                    },
+                    "required": ["value"],
+                },
+            },
+        }
+        Model = create_model_from_schema(schema, model_name="MutualRef")
+        obj = Model(node={"name": "hello", "linked": {"value": 42}})
+        assert obj.node.name == "hello"
+
+    def test_many_tools_with_complex_schemas(self) -> None:
+        """Simulate an MCP server exposing >10 tools (issue #5474 trigger)."""
+        for i in range(15):
+            tool_schema: dict[str, Any] = {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "options": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {"type": "integer"},
+                            "filter": {"type": "string"},
+                        },
+                    },
+                },
+                "required": ["query"],
+            }
+            Model = create_model_from_schema(
+                tool_schema, model_name=f"Tool{i}Schema"
+            )
+            obj = Model(query=f"test_{i}")
+            assert obj.query == f"test_{i}"
+
+    def test_circular_ref_with_enrich_descriptions(self) -> None:
+        """Circular schema + enrich_descriptions should not blow up."""
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Node name"},
+                "child": {"$ref": "#/$defs/Recursive"},
+            },
+            "required": ["name"],
+            "$defs": {
+                "Recursive": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Name"},
+                        "child": {"$ref": "#/$defs/Recursive"},
+                    },
+                },
+            },
+        }
+        Model = create_model_from_schema(
+            schema,
+            model_name="EnrichedCircular",
+            enrich_descriptions=True,
+        )
+        assert Model.__name__ == "EnrichedCircular"
+        obj = Model(name="top")
+        assert obj.name == "top"
+
+    def test_deeply_nested_non_circular_still_works(self) -> None:
+        """A deep but non-circular chain of $refs should still resolve."""
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {"l1": {"$ref": "#/$defs/Level1"}},
+            "required": ["l1"],
+            "$defs": {
+                "Level1": {
+                    "type": "object",
+                    "properties": {"l2": {"$ref": "#/$defs/Level2"}},
+                    "required": ["l2"],
+                },
+                "Level2": {
+                    "type": "object",
+                    "properties": {"l3": {"$ref": "#/$defs/Level3"}},
+                    "required": ["l3"],
+                },
+                "Level3": {
+                    "type": "object",
+                    "properties": {"value": {"type": "string"}},
+                    "required": ["value"],
+                },
+            },
+        }
+        Model = create_model_from_schema(schema, model_name="DeepChain")
+        obj = Model(l1={"l2": {"l3": {"value": "deep"}}})
+        assert obj.l1.l2.l3.value == "deep"

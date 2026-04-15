@@ -91,6 +91,9 @@ def resolve_refs(schema: dict[str, Any]) -> dict[str, Any]:
     This is needed because Pydantic generates $ref-based schemas that
     some consumers (e.g. LLMs, tool frameworks) don't handle well.
 
+    Circular references are detected and replaced with a plain
+    ``{"type": "object"}`` stub to prevent infinite recursion.
+
     Args:
         schema: JSON Schema dict that may contain "$refs" and "$defs".
 
@@ -100,18 +103,23 @@ def resolve_refs(schema: dict[str, Any]) -> dict[str, Any]:
     defs = schema.get("$defs", {})
     schema_copy = deepcopy(schema)
 
-    def _resolve(node: Any) -> Any:
+    def _resolve(node: Any, resolving: frozenset[str] = frozenset()) -> Any:
         if isinstance(node, dict):
             ref = node.get("$ref")
             if isinstance(ref, str) and ref.startswith("#/$defs/"):
                 def_name = ref.replace("#/$defs/", "")
+                if def_name in resolving:
+                    return {"type": "object"}
                 if def_name in defs:
-                    return _resolve(deepcopy(defs[def_name]))
+                    return _resolve(
+                        deepcopy(defs[def_name]),
+                        resolving | {def_name},
+                    )
                 raise KeyError(f"Definition '{def_name}' not found in $defs.")
-            return {k: _resolve(v) for k, v in node.items()}
+            return {k: _resolve(v, resolving) for k, v in node.items()}
 
         if isinstance(node, list):
-            return [_resolve(i) for i in node]
+            return [_resolve(i, resolving) for i in node]
 
         return node
 
@@ -658,6 +666,93 @@ def build_rich_field_description(prop_schema: dict[str, Any]) -> str:
     return ". ".join(parts) if parts else ""
 
 
+# Thread-local set tracking which schemas are currently being converted to
+# Pydantic models.  Used by ``_json_schema_to_pydantic_type`` to detect
+# circular ``$ref`` chains and break the recursion with a ``dict`` fallback.
+_resolving_refs: set[str] = set()
+
+
+def _safe_replace_refs(json_schema: dict[str, Any]) -> dict[str, Any]:
+    """Resolve ``$ref`` pointers in *json_schema*, tolerating circular refs.
+
+    ``jsonref.replace_refs(proxies=False)`` performs eager, recursive
+    inlining.  When a definition refers back to itself (directly or
+    transitively) this blows the Python call stack and also produces
+    Python dicts with circular object references that break all
+    downstream recursive visitors.
+
+    Strategy: always break circular ``$ref`` chains *before* handing the
+    schema to ``jsonref`` so the library never encounters a cycle.
+    """
+    schema_copy = deepcopy(json_schema)
+    defs = schema_copy.get("$defs", {})
+
+    if defs and _has_circular_refs(schema_copy, defs):
+        _break_circular_refs(schema_copy, defs, set())
+
+    try:
+        return dict(jsonref.replace_refs(schema_copy, proxies=False))
+    except RecursionError:
+        # Last resort - return the manually patched copy as-is.
+        return schema_copy
+
+
+def _has_circular_refs(
+    node: Any,
+    defs: dict[str, Any],
+    visiting: set[str] | None = None,
+) -> bool:
+    """Return ``True`` if *node* contains any circular ``$ref`` chain."""
+    if visiting is None:
+        visiting = set()
+
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/$defs/"):
+            def_name = ref.removeprefix("#/$defs/")
+            if def_name in visiting:
+                return True
+            if def_name in defs:
+                visiting.add(def_name)
+                if _has_circular_refs(defs[def_name], defs, visiting):
+                    return True
+                visiting.discard(def_name)
+        for value in node.values():
+            if _has_circular_refs(value, defs, visiting):
+                return True
+    elif isinstance(node, list):
+        for item in node:
+            if _has_circular_refs(item, defs, visiting):
+                return True
+    return False
+
+
+def _break_circular_refs(
+    node: Any,
+    defs: dict[str, Any],
+    visiting: set[str],
+) -> None:
+    """Walk *node* in-place and replace circular ``$ref`` pointers with stubs."""
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/$defs/"):
+            def_name = ref.removeprefix("#/$defs/")
+            if def_name in visiting:
+                # Circular - replace the *whole* node content with a stub.
+                node.clear()
+                node["type"] = "object"
+                return
+            if def_name in defs:
+                visiting.add(def_name)
+                _break_circular_refs(defs[def_name], defs, visiting)
+                visiting.discard(def_name)
+        for value in node.values():
+            _break_circular_refs(value, defs, visiting)
+    elif isinstance(node, list):
+        for item in node:
+            _break_circular_refs(item, defs, visiting)
+
+
 def create_model_from_schema(  # type: ignore[no-any-unimported]
     json_schema: dict[str, Any],
     *,
@@ -676,6 +771,10 @@ def create_model_from_schema(  # type: ignore[no-any-unimported]
     model class based on the schema. It supports various JSON schema features such
     as nested objects, referenced definitions ($ref), arrays with typed items,
     union types (anyOf/oneOf), and string formats.
+
+    Circular ``$ref`` chains (common in complex MCP tool schemas) are detected
+    and broken automatically so that deeply-nested or self-referential schemas
+    never trigger a ``RecursionError``.
 
     Args:
         json_schema: A dictionary representing the JSON schema.
@@ -712,7 +811,7 @@ def create_model_from_schema(  # type: ignore[no-any-unimported]
         >>> person.name
         'John'
     """
-    json_schema = dict(jsonref.replace_refs(json_schema, proxies=False))
+    json_schema = _safe_replace_refs(json_schema)
 
     effective_root = root_schema or json_schema
 
@@ -920,13 +1019,21 @@ def _json_schema_to_pydantic_type(
     """
     ref = json_schema.get("$ref")
     if ref:
-        ref_schema = _resolve_ref(ref, root_schema)
-        return _json_schema_to_pydantic_type(
-            ref_schema,
-            root_schema,
-            name_=name_,
-            enrich_descriptions=enrich_descriptions,
-        )
+        # Detect circular $ref chains - if we are already resolving this
+        # ref higher up the call stack, break the cycle by returning dict.
+        if ref in _resolving_refs:
+            return dict
+        _resolving_refs.add(ref)
+        try:
+            ref_schema = _resolve_ref(ref, root_schema)
+            return _json_schema_to_pydantic_type(
+                ref_schema,
+                root_schema,
+                name_=name_,
+                enrich_descriptions=enrich_descriptions,
+            )
+        finally:
+            _resolving_refs.discard(ref)
 
     enum_values = json_schema.get("enum")
     if enum_values:
