@@ -677,11 +677,11 @@ _resolving_refs_local = threading.local()
 
 def _get_resolving_refs() -> set[str]:
     """Return the per-thread resolving-refs set, creating it on first access."""
-    try:
-        return _resolving_refs_local.refs  # type: ignore[no-any-return]
-    except AttributeError:
-        _resolving_refs_local.refs = set()  # type: ignore[attr-defined]
-        return _resolving_refs_local.refs  # type: ignore[no-any-return]
+    refs: set[str] | None = getattr(_resolving_refs_local, "refs", None)
+    if refs is None:
+        refs = set()
+        object.__setattr__(_resolving_refs_local, "refs", refs)
+    return refs
 
 
 def _safe_replace_refs(json_schema: dict[str, Any]) -> dict[str, Any]:
