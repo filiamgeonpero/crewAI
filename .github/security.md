@@ -5,7 +5,11 @@ CrewAI ecosystem.
 
 ### How to Report
 
-Please submit reports to **crewai-vdp-ess@submit.bugcrowd.com**
+Please submit reports to 
+
+**crewai-vdp-ess@submit.bugcrowd.com**
+or
+https://security.crewai.com
 
 - **Please do not** disclose vulnerabilities via public GitHub issues, pull requests,
   or social media
