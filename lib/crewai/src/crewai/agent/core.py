@@ -84,6 +84,7 @@ from crewai.rag.embeddings.types import EmbedderConfig
 from crewai.security.fingerprint import Fingerprint
 from crewai.skills.loader import activate_skill, discover_skills
 from crewai.skills.models import INSTRUCTIONS, Skill as SkillModel
+from crewai.state.checkpoint_config import CheckpointConfig, apply_checkpoint
 from crewai.tools.agent_tools.agent_tools import AgentTools
 from crewai.types.callback import SerializableCallable
 from crewai.utilities.agent_utils import (
@@ -98,6 +99,7 @@ from crewai.utilities.converter import Converter, ConverterError
 from crewai.utilities.env import get_env_context
 from crewai.utilities.guardrail import process_guardrail
 from crewai.utilities.guardrail_types import GuardrailCallable, GuardrailType
+from crewai.utilities.i18n import I18N_DEFAULT
 from crewai.utilities.llm_utils import create_llm
 from crewai.utilities.prompts import Prompts, StandardPromptResult, SystemPromptResult
 from crewai.utilities.pydantic_schema_utils import generate_model_description
@@ -499,8 +501,8 @@ class Agent(BaseAgent):
             self.tools_handler.last_used_tool = None
 
         task_prompt = task.prompt()
-        task_prompt = build_task_prompt_with_schema(task, task_prompt, self.i18n)
-        task_prompt = format_task_with_context(task_prompt, context, self.i18n)
+        task_prompt = build_task_prompt_with_schema(task, task_prompt)
+        task_prompt = format_task_with_context(task_prompt, context)
         return self._retrieve_memory_context(task, task_prompt)
 
     def _finalize_task_prompt(
@@ -562,7 +564,7 @@ class Agent(BaseAgent):
                         m.format() for m in matches
                     )
             if memory.strip() != "":
-                task_prompt += self.i18n.slice("memory").format(memory=memory)
+                task_prompt += I18N_DEFAULT.slice("memory").format(memory=memory)
 
             crewai_event_bus.emit(
                 self,
@@ -968,14 +970,13 @@ class Agent(BaseAgent):
             agent=self,
             has_tools=len(raw_tools) > 0,
             use_native_tool_calling=use_native_tool_calling,
-            i18n=self.i18n,
             use_system_prompt=self.use_system_prompt,
             system_template=self.system_template,
             prompt_template=self.prompt_template,
             response_template=self.response_template,
         ).task_execution()
 
-        stop_words = [self.i18n.slice("observation")]
+        stop_words = [I18N_DEFAULT.slice("observation")]
         if self.response_template:
             stop_words.append(
                 self.response_template.split("{{ .Response }}")[1].strip()
@@ -1017,7 +1018,6 @@ class Agent(BaseAgent):
             self.agent_executor = self.executor_class(
                 llm=self.llm,
                 task=task,
-                i18n=self.i18n,
                 agent=self,
                 crew=self.crew,
                 tools=parsed_tools,
@@ -1262,10 +1262,10 @@ class Agent(BaseAgent):
                 from_agent=self,
             ),
         )
-        query = self.i18n.slice("knowledge_search_query").format(
+        query = I18N_DEFAULT.slice("knowledge_search_query").format(
             task_prompt=task_prompt
         )
-        rewriter_prompt = self.i18n.slice("knowledge_search_query_system_prompt")
+        rewriter_prompt = I18N_DEFAULT.slice("knowledge_search_query_system_prompt")
         if not isinstance(self.llm, BaseLLM):
             self._logger.log(
                 "warning",
@@ -1342,7 +1342,6 @@ class Agent(BaseAgent):
 
         raw_tools: list[BaseTool] = self.tools or []
 
-        # Inject memory tools for standalone kickoff (crew path handles its own)
         agent_memory = getattr(self, "memory", None)
         if agent_memory is not None:
             from crewai.tools.memory_tools import create_memory_tools
@@ -1384,7 +1383,6 @@ class Agent(BaseAgent):
             request_within_rpm_limit=rpm_limit_fn,
             callbacks=[TokenCalcHandler(self._token_process)],
             response_model=response_format,
-            i18n=self.i18n,
         )
 
         all_files: dict[str, Any] = {}
@@ -1401,7 +1399,6 @@ class Agent(BaseAgent):
         if input_files:
             all_files.update(input_files)
 
-        # Inject memory context for standalone kickoff (recall before execution)
         if agent_memory is not None:
             try:
                 crewai_event_bus.emit(
@@ -1420,7 +1417,7 @@ class Agent(BaseAgent):
                         m.format() for m in matches
                     )
                 if memory_block:
-                    formatted_messages += "\n\n" + self.i18n.slice("memory").format(
+                    formatted_messages += "\n\n" + I18N_DEFAULT.slice("memory").format(
                         memory=memory_block
                     )
                 crewai_event_bus.emit(
@@ -1461,6 +1458,7 @@ class Agent(BaseAgent):
         messages: str | list[LLMMessage],
         response_format: type[Any] | None = None,
         input_files: dict[str, FileInput] | None = None,
+        from_checkpoint: CheckpointConfig | None = None,
     ) -> LiteAgentOutput | Coroutine[Any, Any, LiteAgentOutput]:
         """Execute the agent with the given messages using the AgentExecutor.
 
@@ -1479,6 +1477,9 @@ class Agent(BaseAgent):
             response_format: Optional Pydantic model for structured output.
             input_files: Optional dict of named files to attach to the message.
                    Files can be paths, bytes, or File objects from crewai_files.
+            from_checkpoint: Optional checkpoint config. If ``restore_from``
+                is set, the agent resumes from that checkpoint. Remaining
+                config fields enable checkpointing for the run.
 
         Returns:
             LiteAgentOutput: The result of the agent execution.
@@ -1487,8 +1488,14 @@ class Agent(BaseAgent):
         Note:
             For explicit async usage outside of Flow, use kickoff_async() directly.
         """
-        # Magic auto-async: if inside event loop (e.g., inside a Flow),
-        # return coroutine for Flow to await
+        restored = apply_checkpoint(self, from_checkpoint)
+        if restored is not None:
+            return restored.kickoff(  # type: ignore[no-any-return]
+                messages=messages,
+                response_format=response_format,
+                input_files=input_files,
+            )
+
         if is_inside_event_loop():
             return self.kickoff_async(messages, response_format, input_files)
 
@@ -1624,7 +1631,7 @@ class Agent(BaseAgent):
             try:
                 model_schema = generate_model_description(response_format)
                 schema = json.dumps(model_schema, indent=2)
-                instructions = self.i18n.slice("formatted_task_instructions").format(
+                instructions = I18N_DEFAULT.slice("formatted_task_instructions").format(
                     output_format=schema
                 )
 
@@ -1639,7 +1646,7 @@ class Agent(BaseAgent):
                 if isinstance(conversion_result, BaseModel):
                     formatted_result = conversion_result
             except ConverterError:
-                pass  # Keep raw output if conversion fails
+                pass
         else:
             raw_output = str(output) if not isinstance(output, str) else output
 
@@ -1721,7 +1728,6 @@ class Agent(BaseAgent):
         elif callable(self.guardrail):
             guardrail_callable = self.guardrail
         else:
-            # Should not happen if called from kickoff with guardrail check
             return output
 
         guardrail_result = process_guardrail(
@@ -1767,6 +1773,7 @@ class Agent(BaseAgent):
         messages: str | list[LLMMessage],
         response_format: type[Any] | None = None,
         input_files: dict[str, FileInput] | None = None,
+        from_checkpoint: CheckpointConfig | None = None,
     ) -> LiteAgentOutput:
         """Execute the agent asynchronously with the given messages.
 
@@ -1782,10 +1789,20 @@ class Agent(BaseAgent):
             response_format: Optional Pydantic model for structured output.
             input_files: Optional dict of named files to attach to the message.
                    Files can be paths, bytes, or File objects from crewai_files.
+            from_checkpoint: Optional checkpoint config. If ``restore_from``
+                is set, the agent resumes from that checkpoint.
 
         Returns:
             LiteAgentOutput: The result of the agent execution.
         """
+        restored = apply_checkpoint(self, from_checkpoint)
+        if restored is not None:
+            return await restored.kickoff_async(  # type: ignore[no-any-return]
+                messages=messages,
+                response_format=response_format,
+                input_files=input_files,
+            )
+
         executor, inputs, agent_info, parsed_tools = self._prepare_kickoff(
             messages, response_format, input_files
         )
@@ -1815,6 +1832,7 @@ class Agent(BaseAgent):
         messages: str | list[LLMMessage],
         response_format: type[Any] | None = None,
         input_files: dict[str, FileInput] | None = None,
+        from_checkpoint: CheckpointConfig | None = None,
     ) -> LiteAgentOutput:
         """Async version of kickoff. Alias for kickoff_async.
 
@@ -1822,8 +1840,12 @@ class Agent(BaseAgent):
             messages: Either a string query or a list of message dictionaries.
             response_format: Optional Pydantic model for structured output.
             input_files: Optional dict of named files to attach to the message.
+            from_checkpoint: Optional checkpoint config. If ``restore_from``
+                is set, the agent resumes from that checkpoint.
 
         Returns:
             LiteAgentOutput: The result of the agent execution.
         """
-        return await self.kickoff_async(messages, response_format, input_files)
+        return await self.kickoff_async(
+            messages, response_format, input_files, from_checkpoint
+        )

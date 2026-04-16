@@ -9,7 +9,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from crewai.memory.types import MemoryPromptConfig, MemoryRecord, ScopeInfo
-from crewai.utilities.i18n import get_i18n
+from crewai.utilities.i18n import I18N_DEFAULT
 
 
 _logger = logging.getLogger(__name__)
@@ -149,7 +149,7 @@ def _memory_prompt_line(
         raw = getattr(memory_prompt, key, None)
         if isinstance(raw, str) and raw.strip():
             return raw
-    return get_i18n().memory(key)
+    return I18N_DEFAULT.memory(key)
 
 
 def extract_memories_from_content(

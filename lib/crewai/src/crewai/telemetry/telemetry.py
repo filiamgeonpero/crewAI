@@ -53,6 +53,7 @@ from crewai.telemetry.utils import (
     close_span,
     crew_memory_span_attribute_value,
 )
+from crewai.utilities.i18n import I18N_DEFAULT
 from crewai.utilities.logger_utils import suppress_warnings
 from crewai.utilities.string_utils import sanitize_tool_name
 
@@ -319,7 +320,7 @@ class Telemetry:
                                 "verbose?": agent.verbose,
                                 "max_iter": agent.max_iter,
                                 "max_rpm": agent.max_rpm,
-                                "i18n": agent.i18n.prompt_file,
+                                "i18n": I18N_DEFAULT.prompt_file,
                                 "function_calling_llm": (
                                     getattr(
                                         getattr(agent, "function_calling_llm", None),
@@ -849,7 +850,7 @@ class Telemetry:
                             "verbose?": agent.verbose,
                             "max_iter": agent.max_iter,
                             "max_rpm": agent.max_rpm,
-                            "i18n": agent.i18n.prompt_file,
+                            "i18n": I18N_DEFAULT.prompt_file,
                             "llm": agent.llm.model
                             if isinstance(agent.llm, BaseLLM)
                             else str(agent.llm),
@@ -1059,6 +1060,23 @@ class Telemetry:
             span = tracer.start_span("Feature Usage")
             self._add_attribute(span, "crewai_version", version("crewai"))
             self._add_attribute(span, "feature", feature)
+            close_span(span)
+
+        self._safe_telemetry_operation(_operation)
+
+    def template_installed_span(self, template_name: str) -> None:
+        """Records when a template is downloaded and installed.
+
+        Args:
+            template_name: Name of the template that was installed
+                (without the template_ prefix).
+        """
+
+        def _operation() -> None:
+            tracer = trace.get_tracer("crewai.telemetry")
+            span = tracer.start_span("Template Installed")
+            self._add_attribute(span, "crewai_version", version("crewai"))
+            self._add_attribute(span, "template_name", template_name)
             close_span(span)
 
         self._safe_telemetry_operation(_operation)
