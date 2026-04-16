@@ -175,7 +175,9 @@ def _entity_summary(entities: list[dict[str, Any]]) -> str:
 def _list_json(location: str) -> list[dict[str, Any]]:
     pattern = os.path.join(location, "**", "*.json")
     results = []
-    for path in sorted(glob.glob(pattern, recursive=True), key=os.path.getmtime, reverse=True):
+    for path in sorted(
+        glob.glob(pattern, recursive=True), key=os.path.getmtime, reverse=True
+    ):
         name = os.path.basename(path)
         try:
             with open(path) as f:
@@ -193,7 +195,9 @@ def _list_json(location: str) -> list[dict[str, Any]]:
 
 def _info_json_latest(location: str) -> dict[str, Any] | None:
     pattern = os.path.join(location, "**", "*.json")
-    files = sorted(glob.glob(pattern, recursive=True), key=os.path.getmtime, reverse=True)
+    files = sorted(
+        glob.glob(pattern, recursive=True), key=os.path.getmtime, reverse=True
+    )
     if not files:
         return None
     path = files[0]
