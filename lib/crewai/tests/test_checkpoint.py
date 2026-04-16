@@ -537,3 +537,131 @@ class TestKickoffFromCheckpoint:
         )
         assert mock_restored.checkpoint.restore_from is None
         assert result == "flow_result"
+
+
+# ---------- JSON checkpoint CLI discovery (issue #5491) ----------
+
+
+_MINIMAL_CHECKPOINT = json.dumps({"entities": [], "event_record": {}})
+
+
+class TestListJsonBranchDiscovery:
+    """Verify _list_json discovers checkpoints inside branch subdirectories."""
+
+    def _write_checkpoint(self, base: str, branch: str, name: str) -> str:
+        branch_dir = os.path.join(base, branch)
+        os.makedirs(branch_dir, exist_ok=True)
+        path = os.path.join(branch_dir, name)
+        with open(path, "w") as f:
+            f.write(_MINIMAL_CHECKPOINT)
+        return path
+
+    def test_discovers_main_branch(self) -> None:
+        from crewai.cli.checkpoint_cli import _list_json
+
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, "main", "20260416T120000_abcd1234_p-none.json")
+            results = _list_json(d)
+            assert len(results) == 1
+            assert results[0]["name"] == "20260416T120000_abcd1234_p-none.json"
+
+    def test_discovers_multiple_branches(self) -> None:
+        from crewai.cli.checkpoint_cli import _list_json
+
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, "main", "20260416T120000_aaaa1111_p-none.json")
+            self._write_checkpoint(d, "fork/exp1", "20260416T120001_bbbb2222_p-none.json")
+            results = _list_json(d)
+            assert len(results) == 2
+            names = {r["name"] for r in results}
+            assert "20260416T120000_aaaa1111_p-none.json" in names
+            assert "20260416T120001_bbbb2222_p-none.json" in names
+
+    def test_discovers_flat_layout(self) -> None:
+        """Legacy flat layout (files directly in location/) still works."""
+        from crewai.cli.checkpoint_cli import _list_json
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "20260416T120000_cccc3333_p-none.json")
+            with open(path, "w") as f:
+                f.write(_MINIMAL_CHECKPOINT)
+            results = _list_json(d)
+            assert len(results) == 1
+            assert results[0]["name"] == "20260416T120000_cccc3333_p-none.json"
+
+    def test_empty_directory(self) -> None:
+        from crewai.cli.checkpoint_cli import _list_json
+
+        with tempfile.TemporaryDirectory() as d:
+            results = _list_json(d)
+            assert results == []
+
+    def test_mixed_flat_and_branch(self) -> None:
+        from crewai.cli.checkpoint_cli import _list_json
+
+        with tempfile.TemporaryDirectory() as d:
+            # Flat file
+            flat_path = os.path.join(d, "20260416T110000_flat0000_p-none.json")
+            with open(flat_path, "w") as f:
+                f.write(_MINIMAL_CHECKPOINT)
+            # Branch file
+            self._write_checkpoint(d, "main", "20260416T120000_brnc1111_p-none.json")
+            results = _list_json(d)
+            assert len(results) == 2
+
+
+class TestInfoJsonLatestBranchDiscovery:
+    """Verify _info_json_latest discovers the latest checkpoint across branches."""
+
+    def test_latest_from_branch_subdir(self) -> None:
+        from crewai.cli.checkpoint_cli import _info_json_latest
+
+        with tempfile.TemporaryDirectory() as d:
+            branch_dir = os.path.join(d, "main")
+            os.makedirs(branch_dir)
+            path = os.path.join(branch_dir, "20260416T120000_abcd1234_p-none.json")
+            with open(path, "w") as f:
+                f.write(_MINIMAL_CHECKPOINT)
+            result = _info_json_latest(d)
+            assert result is not None
+            assert result["name"] == "20260416T120000_abcd1234_p-none.json"
+
+    def test_latest_across_branches(self) -> None:
+        from crewai.cli.checkpoint_cli import _info_json_latest
+
+        with tempfile.TemporaryDirectory() as d:
+            # Older checkpoint on main
+            main_dir = os.path.join(d, "main")
+            os.makedirs(main_dir)
+            older = os.path.join(main_dir, "20260416T110000_aaaa1111_p-none.json")
+            with open(older, "w") as f:
+                f.write(_MINIMAL_CHECKPOINT)
+            time.sleep(0.05)
+            # Newer checkpoint on fork branch
+            fork_dir = os.path.join(d, "fork", "exp1")
+            os.makedirs(fork_dir, exist_ok=True)
+            newer = os.path.join(fork_dir, "20260416T120000_bbbb2222_p-none.json")
+            with open(newer, "w") as f:
+                f.write(_MINIMAL_CHECKPOINT)
+            result = _info_json_latest(d)
+            assert result is not None
+            assert result["name"] == "20260416T120000_bbbb2222_p-none.json"
+
+    def test_empty_returns_none(self) -> None:
+        from crewai.cli.checkpoint_cli import _info_json_latest
+
+        with tempfile.TemporaryDirectory() as d:
+            result = _info_json_latest(d)
+            assert result is None
+
+    def test_latest_flat_layout(self) -> None:
+        """Legacy flat layout still returns the latest file."""
+        from crewai.cli.checkpoint_cli import _info_json_latest
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "20260416T120000_flat0000_p-none.json")
+            with open(path, "w") as f:
+                f.write(_MINIMAL_CHECKPOINT)
+            result = _info_json_latest(d)
+            assert result is not None
+            assert result["name"] == "20260416T120000_flat0000_p-none.json"
