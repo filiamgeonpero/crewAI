@@ -584,7 +584,10 @@ async def _run_checkpoint_tui_async(location: str) -> None:
         click.echo("Modifications:")
         overridden_agents: set[int] = set()
         for task_idx, new_output in task_overrides.items():
-            if task_idx < len(entity.tasks) and entity.tasks[task_idx].output is not None:
+            if (
+                task_idx < len(entity.tasks)
+                and entity.tasks[task_idx].output is not None
+            ):
                 desc = entity.tasks[task_idx].description or f"Task {task_idx + 1}"
                 if len(desc) > 60:
                     desc = desc[:57] + "..."
