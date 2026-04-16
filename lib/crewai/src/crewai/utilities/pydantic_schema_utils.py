@@ -783,7 +783,7 @@ def _inline_top_level_ref(schema: dict[str, Any]) -> dict[str, Any]:
         def_name = ref[len("#/$defs/") :]
         defs = schema.get("$defs", {})
         if def_name in defs:
-            resolved = defs[def_name]
+            resolved: dict[str, Any] = defs[def_name]
             # Attach $defs so effective_root can resolve inner $refs.
             resolved.setdefault("$defs", defs)
             return resolved
