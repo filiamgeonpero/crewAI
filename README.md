@@ -111,7 +111,7 @@ Using an AI coding agent? Teach it CrewAI best practices in one command:
 /plugin marketplace add crewAIInc/skills
 ```
 
-**Cursor, Codex, Windsurf, and others:**
+**Cursor, Codex, Windsurf, and others ([skills.sh](https://skills.sh/crewaiinc/skills)):**
 ```shell
 npx skills add crewaiinc/skills
 ```
