@@ -276,7 +276,12 @@ class TestTraceListenerSetup:
                 expected_output="hello world",
                 agent=agent,
             )
-            crew = Crew(agents=[agent], tasks=[task], verbose=True)
+            crew = Crew(
+                name="Hello World Crew",
+                agents=[agent],
+                tasks=[task],
+                verbose=True,
+            )
 
             from crewai.events.event_bus import crewai_event_bus
 
@@ -304,7 +309,7 @@ class TestTraceListenerSetup:
                 # Verify the first completion event has proper structure
                 completion_event = completion_events[0]
                 assert "crew_name" in completion_event.event_data
-                assert completion_event.event_data["crew_name"] == "Crew"
+                assert completion_event.event_data["crew_name"] == "Hello World Crew"
 
                 # Verify all events have proper structure
                 for call in add_event_mock.call_args_list:

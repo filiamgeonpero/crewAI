@@ -8,6 +8,7 @@ from concurrent.futures import Future
 from hashlib import md5
 import re
 import sys
+from typing import Any
 from unittest.mock import ANY, MagicMock, call, patch
 
 from crewai.agent import Agent
