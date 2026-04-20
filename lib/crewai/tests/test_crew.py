@@ -4743,19 +4743,32 @@ def test_default_crew_name(researcher, writer):
     assert crew.name is None
 
 
-def test_crew_kickoff_started_uses_class_name_fallback(researcher, writer):
-    """Unnamed Crew subclasses should emit their class name in CrewKickoffStartedEvent."""
+@pytest.mark.parametrize(
+    "explicit_name,expected",
+    [
+        (None, "ResearchAutomation"),
+        ("My Research Automation", "My Research Automation"),
+    ],
+    ids=["class_name_fallback", "explicit_name_preserved"],
+)
+def test_crew_kickoff_started_emits_display_name(
+    researcher, writer, explicit_name, expected
+):
+    """CrewKickoffStartedEvent emits crew.name when set, class name otherwise."""
     from crewai.crews.utils import prepare_kickoff
 
     class ResearchAutomation(Crew):
         pass
 
-    crew = ResearchAutomation(
-        agents=[researcher, writer],
-        tasks=[
+    crew_kwargs: dict[str, Any] = {
+        "agents": [researcher, writer],
+        "tasks": [
             Task(description="Task 1", expected_output="output", agent=researcher),
         ],
-    )
+    }
+    if explicit_name is not None:
+        crew_kwargs["name"] = explicit_name
+    crew = ResearchAutomation(**crew_kwargs)
 
     captured: list[str | None] = []
     with crewai_event_bus.scoped_handlers():
@@ -4766,34 +4779,7 @@ def test_crew_kickoff_started_uses_class_name_fallback(researcher, writer):
 
         prepare_kickoff(crew, inputs=None)
 
-    assert captured == ["ResearchAutomation"]
-
-
-def test_crew_kickoff_started_respects_explicit_name(researcher, writer):
-    """Explicitly-named crews should emit the provided name, not the class name."""
-    from crewai.crews.utils import prepare_kickoff
-
-    class ResearchAutomation(Crew):
-        pass
-
-    crew = ResearchAutomation(
-        name="My Research Automation",
-        agents=[researcher, writer],
-        tasks=[
-            Task(description="Task 1", expected_output="output", agent=researcher),
-        ],
-    )
-
-    captured: list[str | None] = []
-    with crewai_event_bus.scoped_handlers():
-
-        @crewai_event_bus.on(CrewKickoffStartedEvent)
-        def _capture(_source: Any, event: CrewKickoffStartedEvent) -> None:
-            captured.append(event.crew_name)
-
-        prepare_kickoff(crew, inputs=None)
-
-    assert captured == ["My Research Automation"]
+    assert captured == [expected]
 
 
 @pytest.mark.vcr()
