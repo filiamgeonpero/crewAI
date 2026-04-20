@@ -1,4 +1,4 @@
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 from unittest.mock import Mock, create_autospec, patch
 
 import pytest
@@ -263,7 +263,7 @@ def test_crew_name():
 
 def test_crew_decorator_propagates_class_name_to_instance():
     """@crew-decorated factory method should set Crew.name to the decorated class name."""
-    crew_instance: Crew = InternalCrew().crew()
+    crew_instance: Crew = cast(Any, InternalCrew()).crew()
     assert crew_instance.name == "InternalCrew"
 
 
