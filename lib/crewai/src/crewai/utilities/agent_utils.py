@@ -293,13 +293,40 @@ def handle_max_iterations_exceeded(
         callbacks=callbacks,
     )
 
-    if answer is None or answer == "":
+    # Some providers (notably OpenRouter serving Anthropic/Gemini "thinking"
+    # models such as Claude Sonnet 4.5, Opus 4.5 or Gemini 3 Pro) may return
+    # an empty textual response when forced to produce a final answer,
+    # because the model spent its turn on reasoning tokens. In that case we
+    # prefer to surface whatever partial work we already have rather than
+    # crashing the entire execution with a raw ValueError.
+    if answer is None or (isinstance(answer, str) and answer == ""):
         if verbose:
             printer.print(
-                content="Received None or empty response from LLM call.",
-                color="red",
+                content=(
+                    "Received None or empty response from LLM call. "
+                    "Returning best-effort final answer."
+                ),
+                color="yellow",
             )
-        raise ValueError("Invalid response from LLM call - None or empty.")
+        if (
+            formatted_answer is not None
+            and hasattr(formatted_answer, "text")
+            and formatted_answer.text
+        ):
+            fallback_text = formatted_answer.text
+        else:
+            fallback_text = (
+                "Agent stopped after reaching the maximum number of "
+                "iterations without producing a final answer."
+            )
+        return AgentFinish(
+            thought="",
+            output=fallback_text,
+            text=fallback_text,
+        )
+
+    if not isinstance(answer, str):
+        answer = str(answer)
 
     formatted = format_answer(answer=answer)
 

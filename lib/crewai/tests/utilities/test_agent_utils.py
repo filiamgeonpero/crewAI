@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel, Field
 
+from crewai.agents.parser import AgentAction, AgentFinish
 from crewai.tools.base_tool import BaseTool
 from crewai.utilities.agent_utils import (
     _asummarize_chunks,
@@ -17,9 +18,11 @@ from crewai.utilities.agent_utils import (
     _format_messages_for_summary,
     _split_messages_into_chunks,
     convert_tools_to_openai_schema,
+    handle_max_iterations_exceeded,
     parse_tool_call_args,
     summarize_messages,
 )
+from crewai.utilities.printer import Printer
 
 
 class CalculatorInput(BaseModel):
@@ -1033,3 +1036,125 @@ class TestParseToolCallArgs:
         _, error = parse_tool_call_args("{bad json}", "tool", "call_7")
         assert error is not None
         assert set(error.keys()) == {"call_id", "func_name", "result", "from_cache", "original_tool"}
+
+
+class TestHandleMaxIterationsExceeded:
+    """Tests for handle_max_iterations_exceeded.
+
+    Regression coverage for https://github.com/crewAIInc/crewAI/issues/5537:
+    when OpenRouter-hosted "thinking" models (Anthropic Claude Sonnet 4.5,
+    Opus 4.5 or Gemini 3 Pro Preview) spend their forced-final-answer turn
+    on reasoning tokens, the textual response comes back empty. The
+    executor should not crash with a raw ``ValueError``; it should return
+    a graceful ``AgentFinish`` with the best text we have.
+    """
+
+    def _make_mocks(self, llm_return_value: Any) -> tuple[MagicMock, Printer, list[Any]]:
+        llm = MagicMock()
+        llm.call = MagicMock(return_value=llm_return_value)
+        printer = Printer()
+        messages: list[Any] = []
+        return llm, printer, messages
+
+    def test_empty_string_response_returns_agent_finish_with_previous_text(
+        self,
+    ) -> None:
+        """Empty content after max-iter should reuse prior formatted_answer."""
+        llm, printer, messages = self._make_mocks(llm_return_value="")
+        previous = AgentAction(
+            thought="thinking",
+            tool="my_tool",
+            tool_input="{}",
+            text="Partial reasoning I already produced.",
+            result="tool result",
+        )
+
+        result = handle_max_iterations_exceeded(
+            formatted_answer=previous,
+            printer=printer,
+            messages=messages,
+            llm=llm,
+            callbacks=[],
+            verbose=False,
+        )
+
+        assert isinstance(result, AgentFinish)
+        assert result.text == "Partial reasoning I already produced."
+        assert result.output == "Partial reasoning I already produced."
+        llm.call.assert_called_once()
+
+    def test_none_response_returns_agent_finish_with_fallback_text(self) -> None:
+        """When the LLM returns None and no prior text exists, still produce
+        an AgentFinish describing the max-iterations situation."""
+        llm, printer, messages = self._make_mocks(llm_return_value=None)
+
+        result = handle_max_iterations_exceeded(
+            formatted_answer=None,
+            printer=printer,
+            messages=messages,
+            llm=llm,
+            callbacks=[],
+            verbose=False,
+        )
+
+        assert isinstance(result, AgentFinish)
+        assert "maximum number of" in result.text
+        assert result.text == result.output
+
+    def test_empty_response_without_previous_answer_returns_fallback(
+        self,
+    ) -> None:
+        """Matches the native-tools loop call-site which passes
+        ``formatted_answer=None`` when max_iter is hit."""
+        llm, printer, messages = self._make_mocks(llm_return_value="")
+
+        result = handle_max_iterations_exceeded(
+            formatted_answer=None,
+            printer=printer,
+            messages=messages,
+            llm=llm,
+            callbacks=[],
+            verbose=False,
+        )
+
+        assert isinstance(result, AgentFinish)
+        assert result.text
+        assert "maximum number of" in result.text
+
+    def test_non_empty_response_produces_final_answer(self) -> None:
+        """Baseline: a normal string response is still parsed normally."""
+        llm, printer, messages = self._make_mocks(
+            llm_return_value="Final Answer: hello"
+        )
+
+        result = handle_max_iterations_exceeded(
+            formatted_answer=None,
+            printer=printer,
+            messages=messages,
+            llm=llm,
+            callbacks=[],
+            verbose=False,
+        )
+
+        assert isinstance(result, AgentFinish)
+        assert "hello" in result.text
+        llm.call.assert_called_once()
+
+    def test_non_string_response_is_coerced_to_string(self) -> None:
+        """Some providers may return non-string payloads — we should not
+        crash on a ``TypeError`` coming out of ``format_answer``."""
+        llm, printer, messages = self._make_mocks(
+            llm_return_value={"final": "payload"}
+        )
+
+        result = handle_max_iterations_exceeded(
+            formatted_answer=None,
+            printer=printer,
+            messages=messages,
+            llm=llm,
+            callbacks=[],
+            verbose=False,
+        )
+
+        assert isinstance(result, AgentFinish)
+        assert result.text
