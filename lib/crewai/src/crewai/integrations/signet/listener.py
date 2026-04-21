@@ -15,6 +15,7 @@ who do not opt in pay no import cost.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import importlib
 import threading
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
@@ -120,9 +121,10 @@ class SignetEventListener(BaseEventListener):
         if self._signing_agent is not None:
             return self._signing_agent
         try:
-            from signet_auth import SigningAgent  # type: ignore[import-not-found]
+            signet_auth = importlib.import_module("signet_auth")
         except ImportError as exc:  # pragma: no cover - exercised via stubbed test
             raise ImportError(_SIGNET_INSTALL_HINT) from exc
+        signing_agent_cls = signet_auth.SigningAgent
 
         kwargs: dict[str, Any] = {}
         if self.config.audit:
@@ -130,15 +132,15 @@ class SignetEventListener(BaseEventListener):
         if self.config.policy_path is not None:
             kwargs["policy_path"] = self.config.policy_path
 
-        if self.config.create_if_missing and hasattr(SigningAgent, "create"):
+        if self.config.create_if_missing and hasattr(signing_agent_cls, "create"):
             create_kwargs = dict(kwargs)
             if self.config.owner is not None:
                 create_kwargs["owner"] = self.config.owner
-            self._signing_agent = SigningAgent.create(
+            self._signing_agent = signing_agent_cls.create(
                 self.config.key_name, **create_kwargs
             )
         else:
-            self._signing_agent = SigningAgent(self.config.key_name, **kwargs)
+            self._signing_agent = signing_agent_cls(self.config.key_name, **kwargs)
         return self._signing_agent
 
     def setup_listeners(self, crewai_event_bus: CrewAIEventsBus) -> None:
