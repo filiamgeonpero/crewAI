@@ -13,7 +13,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-04-18T07:00:00Z"
+exclude-newer = "2026-04-18T00:00:00Z"
 
 [manifest]
 members = [
@@ -1330,6 +1330,9 @@ qdrant = [
 qdrant-edge = [
     { name = "qdrant-edge-py" },
 ]
+signet = [
+    { name = "signet-auth" },
+]
 tools = [
     { name = "crewai-tools" },
 ]
@@ -1387,6 +1390,7 @@ requires-dist = [
     { name = "qdrant-client", extras = ["fastembed"], marker = "extra == 'qdrant'", specifier = "~=1.14.3" },
     { name = "qdrant-edge-py", marker = "extra == 'qdrant-edge'", specifier = ">=0.6.0" },
     { name = "regex", specifier = "~=2026.1.15" },
+    { name = "signet-auth", marker = "extra == 'signet'", specifier = ">=0.5.0" },
     { name = "textual", specifier = ">=7.5.0" },
     { name = "tiktoken", marker = "extra == 'embeddings'", specifier = "~=0.8.0" },
     { name = "tokenizers", specifier = ">=0.21,<1" },
@@ -1395,7 +1399,7 @@ requires-dist = [
     { name = "uv", specifier = "~=0.11.6" },
     { name = "voyageai", marker = "extra == 'voyageai'", specifier = "~=0.3.5" },
 ]
-provides-extras = ["a2a", "anthropic", "aws", "azure-ai-inference", "bedrock", "docling", "embeddings", "file-processing", "google-genai", "litellm", "mem0", "openpyxl", "pandas", "qdrant", "qdrant-edge", "tools", "voyageai", "watson"]
+provides-extras = ["a2a", "anthropic", "aws", "azure-ai-inference", "bedrock", "docling", "embeddings", "file-processing", "google-genai", "litellm", "mem0", "openpyxl", "pandas", "qdrant", "qdrant-edge", "signet", "tools", "voyageai", "watson"]
 
 [[package]]
 name = "crewai-devtools"
@@ -8093,6 +8097,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/58/15/8b3609fd3830ef7b27b655beb4b4e9c62313a4e8da8c676e142cc210d58e/shellingham-1.5.4.tar.gz", hash = "sha256:8dbca0739d487e5bd35ab3ca4b36e11c4078f3a234bfce294b0a0291363404de", size = 10310, upload-time = "2023-10-24T04:13:40.426Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e0/f9/0595336914c5619e5f28a1fb793285925a8cd4b432c9da0a987836c7f822/shellingham-1.5.4-py2.py3-none-any.whl", hash = "sha256:7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686", size = 9755, upload-time = "2023-10-24T04:13:38.866Z" },
+]
+
+[[package]]
+name = "signet-auth"
+version = "0.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b8/09/68036ddb2d00985d1081f205e2480368ed28294a864bc87e44796ec6685b/signet_auth-0.9.0.tar.gz", hash = "sha256:c650db7d16236448234a2d356245e19bdb5b48fe78cc3436311db8b002867885", size = 88768, upload-time = "2026-04-13T09:33:56.925Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3a/8d/800651df03709729ae52c89310c71eaf3aea4efadb183e67a9d7f002cba6/signet_auth-0.9.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:013152b26415ceb89cf2969e69a03aa254328f2d7f656a080842c967e2c7d1e1", size = 1730524, upload-time = "2026-04-13T09:33:49.261Z" },
+    { url = "https://files.pythonhosted.org/packages/78/61/59f87d18c76f9dff467b62a48afade139460c090f91ad13c56cb52dd2b46/signet_auth-0.9.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:4c3ce87dc6265993ddc4f56d6ef5ad867b66d74cc8713c23f1fe47d6317b1d55", size = 1614461, upload-time = "2026-04-13T09:33:51.016Z" },
+    { url = "https://files.pythonhosted.org/packages/39/a4/b0d887fda7e25647629be600cd38e8f1fc129f6bc4c5bdefdac61531a915/signet_auth-0.9.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:d2950761b4199d764902520749c60d668ae7ade91de8347e89253a94f102c94d", size = 1802423, upload-time = "2026-04-13T09:33:53.338Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/60/71f8884256523a57646fd0e216b7a267cae69e4751f4bf0e5703bd9b1d5f/signet_auth-0.9.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2139507c8c0d44b74fa6d73f1812446223c1fa381f0d2e811a9a411302378deb", size = 1859359, upload-time = "2026-04-13T09:33:55.506Z" },
 ]
 
 [[package]]
