@@ -212,6 +212,7 @@ class Crew(FlowTrackable, BaseModel):
         default_factory=TaskOutputStorageHandler
     )
     _kickoff_event_id: str | None = PrivateAttr(default=None)
+    _name_was_explicit: bool = PrivateAttr(default=False)
 
     name: str | None = Field(default=None)
     cache: bool = Field(default=True)
@@ -549,7 +550,10 @@ class Crew(FlowTrackable, BaseModel):
     @model_validator(mode="after")
     def _resolve_name(self) -> Self:
         """Fall back to the class name when no explicit name is provided."""
-        if self.name is None:
+        # Snapshot whether `name` was user-provided before the assignment below
+        # pollutes `model_fields_set`.
+        self._name_was_explicit = "name" in self.model_fields_set
+        if not self._name_was_explicit:
             self.name = type(self).__name__
         return self
 

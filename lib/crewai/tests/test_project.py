@@ -293,6 +293,33 @@ def test_crew_decorator_preserves_explicit_name():
     assert crew_instance.name == "My Explicit Name"
 
 
+def test_crew_decorator_preserves_explicit_name_matching_class_name():
+    """Explicit name that happens to equal the class-name fallback must still win."""
+    sample_agent = Agent(role="r", goal="g", backstory="b")
+    sample_task = Task(description="d", expected_output="o", agent=sample_agent)
+
+    @CrewBase
+    class AmbiguousFactory:
+        agents_config = None
+        tasks_config = None
+        agents: list[BaseAgent] = [sample_agent]
+        tasks: list[Task] = [sample_task]
+
+        @crew
+        def crew(self):
+            # "Crew" is the class-name fallback the validator would use, but the
+            # user set it explicitly — propagation must still skip the override.
+            return Crew(
+                name="Crew",
+                agents=[sample_agent],
+                tasks=[sample_task],
+            )
+
+    factory_cls = cast(type[Any], AmbiguousFactory)
+    crew_instance: Crew = cast(Any, factory_cls()).crew()
+    assert crew_instance.name == "Crew"
+
+
 @tool
 def simple_tool():
     """Return 'Hi!'"""

@@ -238,10 +238,10 @@ def crew(
 
         crew_instance: Crew = _call_method(meth, self, *args, **kwargs)
 
-        # Override only when the Crew's name is the auto-resolved class-name
-        # fallback, so an explicit `Crew(name=...)` inside the factory wins.
+        # Propagate the @CrewBase class name only when the user didn't pass an
+        # explicit `name=` to the Crew constructor inside the factory method.
         crewbase_name = getattr(self, "_crew_name", None)
-        if crewbase_name and crew_instance.name == type(crew_instance).__name__:
+        if crewbase_name and not crew_instance._name_was_explicit:
             crew_instance.name = crewbase_name
 
         def callback_wrapper(
