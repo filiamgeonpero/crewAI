@@ -73,7 +73,8 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 env_files = [".env.test"]
-addopts = "--cov=src/crewai --cov-report=term-missing --cov-report=xml"
+# Removed --cov-report=xml locally — I don't use CI coverage uploads, term-missing is enough
+addopts = "--cov=src/crewai --cov-report=term-missing"
 
 [tool.coverage.run]
 source = ["src/crewai"]
