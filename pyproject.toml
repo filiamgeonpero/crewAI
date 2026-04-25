@@ -78,6 +78,11 @@ addopts = "--cov=src/crewai --cov-report=term-missing"
 # Only show output from failed tests to keep the terminal readable during dev
 log_cli = false
 log_level = "WARNING"
+# Skip slow integration tests by default; run with -m "" to include them
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests that call external APIs",
+]
 
 [tool.coverage.run]
 source = ["src/crewai"]
