@@ -83,6 +83,11 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests that call external APIs",
 ]
+# Ignore deprecation warnings from langchain internals — too noisy during local dev
+filterwarnings = [
+    "ignore::DeprecationWarning:langchain",
+    "ignore::PendingDeprecationWarning:langchain",
+]
 
 [tool.coverage.run]
 source = ["src/crewai"]
