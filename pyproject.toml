@@ -75,6 +75,9 @@ asyncio_mode = "auto"
 env_files = [".env.test"]
 # Removed --cov-report=xml locally — I don't use CI coverage uploads, term-missing is enough
 addopts = "--cov=src/crewai --cov-report=term-missing"
+# Only show output from failed tests to keep the terminal readable during dev
+log_cli = false
+log_level = "WARNING"
 
 [tool.coverage.run]
 source = ["src/crewai"]
